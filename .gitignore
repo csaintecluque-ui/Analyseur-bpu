@@ -1,0 +1,11 @@
+# Aucune donnée de bordereau ni de coût ne doit entrer dans ce dépôt.
+# L'historique Git conserve ce qui a été commité, même supprimé ensuite.
+*.json
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.ods
+*.pdf
+*.doc
+*.docx

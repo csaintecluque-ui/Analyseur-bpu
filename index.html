@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analyseur de BPU — Diagnostics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- SheetJS lit les bordereaux, y compris les vieux .xls ; ExcelJS écrit l'export,
+     car la version libre de SheetJS n'applique pas les couleurs de fond. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+:root{
+  --encre:#16202b; --encre-2:#48586a; --encre-3:#7a8896;
+  --fond:#f2f4f6; --surface:#ffffff; --trait:#dde3e9; --trait-fort:#c3ccd6;
+  --marine:#123a5b; --marine-clair:#1d5b8a; --marine-pale:#e8f0f6;
+  --ambre:#8a5a00; --ambre-pale:#fdf3e0;
+  --vert:#1c6b47; --vert-pale:#e6f3ec;
+  --brique:#9b3428; --brique-pale:#fbeae7;
+  --r:3px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--fond); color:var(--encre);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  font-size:13.5px; line-height:1.45;
+}
+.num{font-variant-numeric:tabular-nums}
+.app{display:grid; grid-template-columns:210px 1fr; min-height:100vh}
+.rail{background:var(--marine); color:#dbe6ef; display:flex; flex-direction:column}
+.rail h1{font-size:14px; font-weight:600; margin:0; padding:18px 18px 4px; color:#fff}
+.rail .sous{padding:0 18px 18px; font-size:11.5px; color:#8fb0c9; line-height:1.4}
+.etape{
+  display:flex; gap:10px; align-items:baseline; width:100%; text-align:left;
+  background:none; border:0; border-left:3px solid transparent; color:#c3d6e5;
+  padding:9px 18px; font:inherit; font-size:13px; cursor:pointer;
+}
+.etape:hover{background:rgba(255,255,255,.06); color:#fff}
+.etape[aria-current="true"]{background:rgba(255,255,255,.1); border-left-color:#7fc4e8; color:#fff; font-weight:600}
+.etape .n{font-size:11px; color:#7fa8c6; min-width:11px}
+.etape[aria-current="true"] .n{color:#7fc4e8}
+.rail .bas{margin-top:auto; padding:14px 18px; border-top:1px solid rgba(255,255,255,.12); font-size:11px; color:#89a9c2}
+.zone{display:flex; flex-direction:column; min-width:0}
+.barre{background:var(--surface); border-bottom:1px solid var(--trait); padding:10px 20px;
+  display:flex; gap:14px; align-items:center; flex-wrap:wrap}
+.barre h2{margin:0; font-size:15px; font-weight:600}
+.barre .aide{color:var(--encre-2); font-size:12.5px; max-width:64ch}
+.corps{padding:18px 20px 40px; overflow:auto}
+.pied{position:sticky; bottom:0; background:var(--surface); border-top:1px solid var(--trait);
+  padding:7px 20px; font-size:12px; color:var(--encre-2); display:flex; gap:18px; flex-wrap:wrap; align-items:center}
+.pied b{color:var(--encre); font-weight:600}
+button{font:inherit}
+.btn{background:var(--marine); color:#fff; border:1px solid var(--marine);
+  border-radius:var(--r); padding:6px 13px; cursor:pointer}
+.btn:hover{background:var(--marine-clair); border-color:var(--marine-clair)}
+.btn.sec{background:var(--surface); color:var(--marine); border-color:var(--trait-fort)}
+.btn.sec:hover{background:var(--marine-pale)}
+.btn.min{padding:3px 8px; font-size:12px}
+:focus-visible{outline:2px solid var(--marine-clair); outline-offset:1px}
+input,select,textarea{font:inherit; color:inherit; background:var(--surface);
+  border:1px solid var(--trait-fort); border-radius:var(--r); padding:4px 6px; max-width:100%}
+input[type=number]{text-align:right; font-variant-numeric:tabular-nums}
+label{font-size:12.5px; color:var(--encre-2)}
+.bloc{background:var(--surface); border:1px solid var(--trait); border-radius:var(--r); margin-bottom:16px}
+.bloc>header{padding:9px 14px; border-bottom:1px solid var(--trait); display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+.bloc>header h3{margin:0; font-size:13.5px; font-weight:600}
+.bloc>header .n{margin-left:auto; color:var(--encre-3); font-size:12px}
+.bloc .dedans{padding:14px}
+table{border-collapse:collapse; width:100%}
+th,td{padding:5px 8px; text-align:left; border-bottom:1px solid var(--trait); vertical-align:top}
+thead th{position:sticky; top:0; z-index:2; background:#eef2f5; border-bottom:1px solid var(--trait-fort);
+  font-size:12px; font-weight:600; color:var(--encre-2)}
+tbody tr:hover{background:#f7fafc}
+td.n,th.n{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+tr.sect td{background:#eef2f5; font-weight:600; color:var(--marine); font-size:12.5px}
+tfoot td{border-top:2px solid var(--trait-fort); font-weight:600; background:#f7fafc}
+.jeton{display:inline-block; padding:1px 6px; border-radius:9px; font-size:11px; border:1px solid}
+.j-gris{background:#eef1f4; border-color:var(--trait-fort); color:var(--encre-2)}
+.j-main{background:var(--vert-pale); border-color:#b4d9c5; color:var(--vert)}
+.j-non{background:var(--brique-pale); border-color:#e8c0b9; color:var(--brique)}
+.avis{border-left:3px solid; padding:9px 12px; border-radius:0 var(--r) var(--r) 0; margin-bottom:14px; font-size:12.5px}
+.avis.info{background:var(--marine-pale); border-color:var(--marine-clair)}
+.avis.attention{background:var(--ambre-pale); border-color:var(--ambre)}
+.vide{padding:44px 20px; text-align:center; color:var(--encre-2); max-width:58ch; margin:0 auto}
+.vide p{margin:0 0 14px}
+.depot{border:2px dashed var(--trait-fort); border-radius:var(--r); background:var(--surface);
+  padding:40px 20px; text-align:center; cursor:pointer}
+.depot:hover,.depot.survol{border-color:var(--marine-clair); background:var(--marine-pale)}
+.depot strong{display:block; font-size:15px; margin-bottom:5px}
+.depot span{color:var(--encre-2); font-size:12.5px}
+.ligne-outils{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px}
+.sep{flex:1}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px}
+.petit{font-size:11.5px; color:var(--encre-3)}
+.bandeau{display:flex; flex-wrap:wrap; background:var(--surface); border:1px solid var(--trait); border-radius:var(--r); margin-bottom:16px}
+.chiffre{display:flex; flex-direction:column; gap:1px; padding:10px 14px; border-right:1px solid var(--trait)}
+.chiffre:last-child{border-right:0}
+.chiffre .v{font-size:19px; font-weight:600; font-variant-numeric:tabular-nums}
+.chiffre .l{font-size:11.5px; color:var(--encre-2)}
+select.ligne{width:100%; max-width:640px}
+@media (max-width:820px){
+  .app{grid-template-columns:1fr}
+  .rail{flex-direction:row; flex-wrap:wrap}
+  .rail h1,.rail .sous,.rail .bas{width:100%}
+  .etape{width:auto; border-left:0; border-bottom:3px solid transparent}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <h1>Analyseur de BPU</h1>
+    <div class="sous">Chiffrage de cas concrets à partir des lignes d'un bordereau</div>
+    <button class="etape" data-vue="import"><span class="n">1</span><span>Import du BPU</span></button>
+    <button class="etape" data-vue="synthese"><span class="n">2</span><span>Synthèse du BPU</span></button>
+    <button class="etape" data-vue="lignes"><span class="n">3</span><span>Lignes du BPU</span></button>
+    <button class="etape" data-vue="couts"><span class="n">4</span><span>Coûts et temps</span></button>
+    <button class="etape" data-vue="cas"><span class="n">5</span><span>Cas pratiques</span></button>
+    <button class="etape" data-vue="resultats"><span class="n">6</span><span>Résultats</span></button>
+    <button class="etape" data-vue="sauvegarde"><span class="n">7</span><span>Sauvegarde</span></button>
+    <div class="bas">Tout reste dans ce navigateur.<br>Aucune donnée n'est envoyée.</div>
+  </nav>
+  <div class="zone">
+    <div class="barre"><h2 id="titre">Import du BPU</h2><span class="aide" id="aide"></span></div>
+    <div id="cadre" style="display:none; background:var(--ambre-pale); border-bottom:1px solid var(--trait);
+         padding:8px 20px; font-size:12.5px; display:none; gap:12px; align-items:center; flex-wrap:wrap">
+      <span>Cette page est affichée dans un cadre intégré. Les téléchargements et la mémoire du navigateur
+        y sont souvent bloqués.</span>
+      <a id="plein" class="btn min" target="_blank" rel="noopener" style="text-decoration:none">Ouvrir en plein écran</a>
+    </div>
+    <main class="corps" id="corps"></main>
+    <div class="pied">
+      <span>Fichier : <b id="p-fichier">aucun</b></span>
+      <span>Lignes : <b id="p-lignes" class="num">0</b></span>
+      <span>Lignes renseignées : <b id="p-couts" class="num">0</b></span>
+      <span>Cas : <b id="p-cas" class="num">0</b></span>
+      <span class="sep"></span>
+      <span id="p-save" class="petit"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ═══════════════════════════════════════════════════════════
+   OUTILS
+   ═══════════════════════════════════════════════════════════ */
+function norm(s){
+  if(s===null||s===undefined) return "";
+  return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/\s+/g," ").trim().toLowerCase();
+}
+function estNombre(v){
+  if(typeof v === "number") return isFinite(v);
+  if(typeof v !== "string") return false;
+  const t = v.replace(/\s|€|\u00a0/g,"").replace(",",".");
+  return t !== "" && isFinite(Number(t));
+}
+function versNombre(v){
+  if(typeof v === "number") return v;
+  if(typeof v !== "string") return null;
+  const t = v.replace(/\s|€|\u00a0/g,"").replace(",",".");
+  return t!=="" && isFinite(Number(t)) ? Number(t) : null;
+}
+const eur = n => (n===null||n===undefined||!isFinite(n)) ? "—"
+  : n.toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";
+const pct = n => (n===null||n===undefined||!isFinite(n)) ? "—"
+  : (n*100).toLocaleString("fr-FR",{maximumFractionDigits:1})+" %";
+// Les temps sont saisis et stockés en heures décimales ; on les affiche en h et min.
+const duree = heures => {
+  if(heures===null||heures===undefined||!isFinite(heures)) return "—";
+  const tot = Math.round(heures*60);
+  const h = Math.floor(tot/60), m = tot%60;
+  return h ? (m ? `${h} h ${String(m).padStart(2,"0")}` : `${h} h`) : `${m} min`;
+};
+function ech(s){ const d=document.createElement("div"); d.textContent=s===null||s===undefined?"":String(s); return d.innerHTML; }
+
+/* ═══════════════════════════════════════════════════════════
+   LECTURE DU CLASSEUR
+   ═══════════════════════════════════════════════════════════ */
+function roleColonne(txt){
+  const t = norm(txt);
+  if(!t) return null;
+  const essais = [
+    ["total", 9, /prix\s+total|montant\s+total|prix\s+global|total\s+h\.?t/],
+    ["qty",   9, /quantit|\bqte\b|\bqté\b|^dqe|qt[ée]\s+annuelle/],
+    ["tva",   9, /\btva\b/],
+    ["pu",    9, /prix\s+unitaire|p\.?\s?u\.?\s*h\.?t|montant\s+h\.?t|prix\s+h\.?t|prix\s+ramen/],
+    ["pu",    6, /\bpu\b|prix\s+au\b|prix\s+en\b|€\s*h\.?t|^prix\b|^\s*€|euros/],
+    ["unit",  9, /^unit[ée]s?\s*:?\s*$|^u\.?$|^unit[ée]\s*\(/],
+    ["unit",  5, /^unit[ée]s?\b/],
+    ["label", 9, /d[ée]signation|libell[ée]\s+long|libell[ée]|intitul[ée]/],
+    ["label", 6, /^objet|descriptif|^description/],
+    ["label", 3, /prestation/],
+    ["code",  9, /n°?\s*(de\s*)?prix|^code|codif|n°\s*de\s*ligne|r[ée]f[ée]rence|^r[ée]f\b/],
+    ["code",  5, /^poste|^num[ée]ro|^article|^n°/],
+  ];
+  let role=null, conf=0;
+  for(const [r,c,re] of essais) if(c>conf && re.test(t)){ role=r; conf=c; }
+  return role ? {role, conf} : null;
+}
+
+function detecterEntete(lignes){
+  let meilleur = null, meilleurScore = 0;
+  const fin = Math.min(lignes.length, 30);
+  const lireLigne = (i, bonus) => {
+    const trouves = [];
+    (lignes[i]||[]).forEach((v,j)=>{
+      if(v===null||v===undefined||String(v).trim()==="") return;
+      const r = roleColonne(v);
+      if(r) trouves.push({role:r.role, conf:r.conf+bonus, col:j});
+    });
+    return trouves;
+  };
+  for(let i=0;i<fin;i++){
+    const remplies = (lignes[i]||[]).filter(v=>v!==null&&v!==undefined&&String(v).trim()!=="").length;
+    if(remplies < 2) continue;
+    const propres = lireLigne(i, 0);
+    if(propres.length < 2) continue;                 // une ligne de titre n'est pas un en-tête
+    const cands = propres.concat(lireLigne(i+1, 1)); // en-tête sur deux lignes : le bas précise
+    const parCol = {};
+    for(const c of cands) if(!parCol[c.col] || c.conf > parCol[c.col].conf) parCol[c.col] = c;
+    const roles = {};
+    for(const c of Object.values(parCol))
+      if(roles[c.role]===undefined || c.conf > roles[c.role].conf) roles[c.role] = c;
+    const cols = {};
+    for(const [r,c] of Object.entries(roles)) cols[r] = c.col;
+    const score = Object.keys(cols).length + (cols.pu!==undefined?2:0) + (cols.label!==undefined?2:0);
+    if(score > meilleurScore){ meilleurScore = score; meilleur = {ligne:i, roles:cols}; }
+  }
+  return meilleur;
+}
+
+/* Une cellule fusionnée ne porte sa valeur que sur sa première case. On la recopie
+   vers le bas, jamais vers la droite : une fusion horizontale n'est qu'un titre étalé. */
+function lireFeuilleBrute(ws){
+  const lignes = XLSX.utils.sheet_to_json(ws, {header:1, blankrows:true, defval:null, raw:true});
+  for(const m of (ws["!merges"] || [])){
+    if(m.e.r <= m.s.r) continue;
+    const src = lignes[m.s.r] ? lignes[m.s.r][m.s.c] : null;
+    if(src===null || src===undefined || String(src).trim()==="") continue;
+    for(let r=m.s.r+1; r<=m.e.r; r++){
+      if(!lignes[r]) lignes[r] = [];
+      for(let c=m.s.c; c<=Math.min(m.e.c, m.s.c+2); c++){
+        const v = lignes[r][c];
+        if(v===null || v===undefined || String(v).trim()==="") lignes[r][c] = src;
+      }
+    }
+  }
+  return lignes;
+}
+
+/* Dans un bordereau numéroté, la ligne 1.4 est une déclinaison de la ligne 1 :
+   « Surface entre 100 et 500 m² » ne veut rien dire sans « MÀJ DTA » au-dessus. */
+function cleCode(code){
+  return String(code||"").trim().split(/[.\-–—_/]+/).filter(Boolean).join("\u0001");
+}
+function prefixesCode(code){
+  const parts = String(code||"").trim().split(/[.\-–—_/]+/).filter(Boolean);
+  const out = [];
+  for(let k=1; k<parts.length; k++) out.push(parts.slice(0,k).join("\u0001"));
+  return out;
+}
+
+function analyserFeuille(lignes, nomFeuille){
+  const det = detecterEntete(lignes);
+  if(!det) return {nom:nomFeuille, lignes:[], entete:null, roles:{}, nbPrix:0};
+  const {ligne:hi, roles} = det;
+  const cLabel = roles.label, cPu = roles.pu, cUnit = roles.unit,
+        cCode = roles.code, cQty = roles.qty;
+  const out = [];
+  let sections = [];
+  const parCode = {};
+  const attribuees = new Set(Object.values(roles));
+  const bordereauChiffre = lignes.slice(hi+1).some(r => cPu!==undefined && r && estNombre(r[cPu]));
+
+  for(let i=hi+1;i<lignes.length;i++){
+    const row = lignes[i] || [];
+    const remplies = row.map((v,j)=>[v,j]).filter(([v])=>v!==null&&v!==undefined&&String(v).trim()!=="");
+    if(remplies.length === 0) continue;
+
+    const val = c => (c!==undefined && row[c]!==undefined && row[c]!==null && String(row[c]).trim()!=="") ? row[c] : null;
+    const label = val(cLabel), pu = val(cPu), unit = val(cUnit), code = val(cCode), qty = val(cQty);
+    const puNum = estNombre(pu) ? versNombre(pu) : null;
+    const qtyNum = estNombre(qty) ? versNombre(qty) : null;
+    const texteSeul = remplies.filter(([v])=>!estNombre(v));
+
+    // paragraphes d'explication intercalés : ni prestation, ni titre
+    if(texteSeul.length === remplies.length && texteSeul.length <= 3){
+      const t0 = String(texteSeul[0][0]).trim();
+      if(t0.length > 130 || /^(ce prix|ce poste|ce montant|il est [àa] noter|les quantit|le titulaire|nota|rappel)/i.test(norm(t0)))
+        continue;
+    }
+
+    const aucunRepere = unit === null && qtyNum === null &&
+                        (bordereauChiffre ? puNum === null : true) &&
+                        texteSeul.length === remplies.length;
+    const estTitre = aucunRepere && remplies.length <= 2 && texteSeul.length >= 1;
+
+    if(estTitre){
+      const txt = texteSeul.map(([v])=>String(v).trim()).join(" — ");
+      if(txt.length > 1 && txt.length < 200){
+        // Deux titres de même forme sont frères : le second remplace le premier
+        // et tout ce qui avait été empilé depuis.
+        const forme = texteSeul[0][1] + "/" + texteSeul.length;
+        const k = sections.findIndex(x => x.forme === forme);
+        if(k >= 0) sections = sections.slice(0, k);
+        sections.push({forme, txt});
+        out.push({type:"section", texte:txt, ligneXl:i+1});
+      }
+      continue;
+    }
+
+    const aLabel = label !== null;
+    const aRepere = unit !== null || puNum !== null || code !== null;
+    if(!aRepere && !aLabel) continue;
+    if(!aLabel && code === null) continue;
+
+    const libelleBrut = aLabel ? String(label).replace(/\s+/g," ").trim()
+                               : (code ? String(code).trim() : "");
+    if(!libelleBrut) continue;
+    if(/^(sous-?total|total|montant total)/i.test(norm(libelleBrut))) continue;
+
+    // Les colonnes sans rôle portent souvent le critère qui distingue deux lignes
+    // voisines : le type de logement, la tranche de surface, le nombre de niveaux.
+    const precisions = remplies
+      .filter(([v,j]) => !attribuees.has(j) && !estNombre(v))
+      .map(([v]) => String(v).replace(/\s+/g," ").trim())
+      .filter(v => v.length>0 && v.length<70 && norm(v)!==norm(libelleBrut));
+
+    const parents = [];
+    for(const pre of prefixesCode(code)) if(parCode[pre]) parents.push(parCode[pre]);
+    const contexte = [...sections.map(s=>s.txt), ...parents].join(" › ");
+    if(code!==null) parCode[cleCode(code)] = libelleBrut;
+
+    out.push({
+      type:"prix",
+      id: nomFeuille + "|" + (i+1),
+      ligneXl: i+1,
+      cle: code!==null ? cleCode(code) : "",
+      code: code!==null ? String(code).trim() : "",
+      libelle: libelleBrut,
+      precisions,
+      contexte,
+      complet: [contexte, libelleBrut, ...precisions].filter(Boolean).join(" › "),
+      unite: unit!==null ? String(unit).trim() : "",
+      pu: puNum,
+      puOrigine: puNum,
+      puTexte: (pu!==null && puNum===null) ? String(pu).trim() : "",
+      qteBpu: qtyNum,
+    });
+  }
+
+  // Une ligne qui en chapeaute d'autres est un intitulé de regroupement, pas un prix.
+  const prefixes = new Set();
+  for(const l of out) if(l.type==="prix" && l.code) for(const pre of prefixesCode(l.code)) prefixes.add(pre);
+  out.forEach(l=>{ if(l.type==="prix") l.regroupement = !!(l.cle && prefixes.has(l.cle)); });
+
+  const nbPrix = out.filter(l=>l.type==="prix").length;
+  return {nom:nomFeuille, lignes:out, entete:hi+1, roles, nbPrix};
+}
+
+function lireClasseur(buf, nomFichier){
+  const wb = XLSX.read(buf, {type:"array", cellDates:false});
+  const feuilles = [];
+  for(const nom of wb.SheetNames){
+    if(/^XDO_METADATA$/i.test(nom)) continue;      // onglet technique des exports progiciel
+    const lignes = lireFeuilleBrute(wb.Sheets[nom]);
+    if(!lignes.length) continue;
+    feuilles.push(analyserFeuille(lignes, nom));
+  }
+  return {nomFichier, feuilles};
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ÉTAT
+   ═══════════════════════════════════════════════════════════ */
+const CLE = "analyseur-bpu-v2";
+const VERSION = 3;                                  // 3 : les temps passent des minutes aux heures
+function etatNeuf(){
+  return {version:VERSION, fichier:null, feuilles:[], feuilleActive:0,
+          coefficient:1, couts:[], cas:[]};
+}
+/* Les temps saisis avant ce changement étaient des minutes : on les convertit
+   plutôt que de laisser « 90 » se transformer silencieusement en quatre-vingt-dix heures. */
+function migrer(o){
+  if(!o || o.version === VERSION) return o;
+  if(o.version === 2){
+    const enHeures = v => (v===null||v===undefined||v==="") ? null : Math.round((+v/60)*100)/100;
+    (o.couts||[]).forEach(c=>{ c.temps = enHeures(c.temps); });
+    (o.cas||[]).forEach(c=>{ c.temps = enHeures(c.temps); });
+    o.version = VERSION;
+    return o;
+  }
+  return null;
+}
+let S = etatNeuf();
+
+function feuille(){ return S.feuilles[S.feuilleActive] || null; }
+function lignesPrix(){ const f = feuille(); return f ? f.lignes.filter(l=>l.type==="prix") : []; }
+function toutesLignes(){
+  const out = [];
+  for(const f of S.feuilles) for(const l of f.lignes) if(l.type==="prix") out.push(l);
+  return out;
+}
+function ligneParId(id){ return toutesLignes().find(l=>l.id===id) || null; }
+function coutDeLigne(id){
+  const c = S.couts.find(x=>x.ligne===id);
+  return c && c.cout!==null && c.cout!=="" && c.cout!==undefined ? +c.cout : null;
+}
+// Temps d'intervention en heures. Sans lui, deux lignes au même prix se valent ;
+// avec lui, on voit laquelle mobilise un technicien deux fois plus longtemps.
+function tempsDeLigne(id){
+  const c = S.couts.find(x=>x.ligne===id);
+  return c && c.temps!==null && c.temps!=="" && c.temps!==undefined ? +c.temps : null;
+}
+
+let minuteur = null;
+function enregistrer(){
+  clearTimeout(minuteur);
+  minuteur = setTimeout(()=>{
+    try{
+      localStorage.setItem(CLE, JSON.stringify(S));
+      document.getElementById("p-save").textContent =
+        "Enregistré à " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+    }catch(e){
+      document.getElementById("p-save").textContent = "Enregistrement local indisponible — exportez le JSON";
+    }
+  }, 350);
+}
+function recharger(){
+  try{
+    const t = localStorage.getItem(CLE);
+    if(!t) return false;
+    const o = migrer(JSON.parse(t));
+    if(o && o.version === VERSION){ S = Object.assign(etatNeuf(), o); return true; }
+  }catch(e){}
+  return false;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CALCUL
+   ═══════════════════════════════════════════════════════════ */
+function calculerCas(cas){
+  const postes = [];
+  let ca = 0, cout = 0, heuresPostes = 0, incomplets = 0;
+  for(const p of cas.postes){
+    const l = ligneParId(p.ligne);
+    const qte = +p.qte || 0;
+    if(!l){ postes.push({ligne:null, qte, motif:"ligne absente du bordereau chargé"}); incomplets++; continue; }
+    const pu = l.pu===null ? null : l.pu * S.coefficient;
+    const montant = pu===null ? null : pu * qte;
+    const cu = coutDeLigne(l.id);
+    const coutTotal = cu===null ? null : cu * qte;
+    const tu = tempsDeLigne(l.id);
+    const tempsTotal = tu===null ? null : tu * qte;
+    if(pu===null) incomplets++;
+    ca += montant || 0;
+    cout += coutTotal || 0;
+    heuresPostes += tempsTotal || 0;
+    postes.push({ligne:l, qte, pu, montant, coutUnitaire:cu, coutTotal, tempsUnitaire:tu, tempsTotal});
+  }
+  // Trois diagnostics dans le même logement ne prennent pas trois fois le temps d'un seul :
+  // un temps saisi sur le cas remplace la somme des lignes, qui reste affichée pour comparaison.
+  const heuresLignes = heuresPostes;
+  const saisi = (cas.temps===null || cas.temps==="" || cas.temps===undefined) ? null : +cas.temps;
+  const heures = saisi!==null ? saisi : heuresLignes;
+  // Pas de taux de marge : sans le coût du technicien, un pourcentage donnerait
+  // 100 % dès qu'une ligne n'a pas de frais direct. Le net par heure, lui, se compare
+  // au coût horaire chargé que vous connaissez par ailleurs.
+  return {postes, ca, cout, marge: ca - cout, heures, heuresLignes, tempsSaisi:saisi,
+          margeHoraire: heures>0 ? (ca-cout)/heures : null,
+          caHoraire: heures>0 ? ca/heures : null,
+          incomplets};
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INTERFACE
+   ═══════════════════════════════════════════════════════════ */
+const AIDES = {
+  import:"Déposez le bordereau au format Excel. Chaque onglet est analysé séparément.",
+  synthese:"Ce que dit le bordereau une fois lu : son poids, sa concentration, ses lignes décisives.",
+  lignes:"Toutes les lignes lues dans le bordereau. Les prix sont modifiables, ce qui permet aussi de chiffrer un BPU vierge.",
+  couts:"Pour chaque ligne, votre coût direct et le temps d'intervention. Le temps est ce qui permet de comparer des lignes entre elles.",
+  cas:"Composez un cas en choisissant des lignes du bordereau et leur quantité. Rien n'est prédéfini.",
+  resultats:"Chiffre d'affaires, coût et marge de chaque cas, au coefficient appliqué.",
+  sauvegarde:"Un fichier JSON contient le bordereau, vos coûts et vos cas.",
+};
+let vue = "import";
+let recherche = "";
+
+function aller(v){
+  vue = v;
+  document.querySelectorAll(".etape").forEach(b=>b.setAttribute("aria-current", String(b.dataset.vue===v)));
+  document.getElementById("titre").textContent = {
+    import:"Import du BPU", synthese:"Synthèse du BPU", lignes:"Lignes du BPU", couts:"Coûts et temps",
+    cas:"Cas pratiques", resultats:"Résultats", sauvegarde:"Sauvegarde"}[v];
+  document.getElementById("aide").textContent = AIDES[v];
+  dessiner();
+}
+function dessiner(){
+  const c = document.getElementById("corps");
+  c.scrollTop = 0;
+  ({import:vueImport, synthese:vueSynthese, lignes:vueLignes, couts:vueCouts,
+    cas:vueCas, resultats:vueResultats, sauvegarde:vueSauvegarde}[vue])(c);
+  majPied();
+}
+function majPied(){
+  document.getElementById("p-fichier").textContent = S.fichier || "aucun";
+  document.getElementById("p-lignes").textContent = lignesPrix().length;
+  document.getElementById("p-couts").textContent =
+    S.couts.filter(c=>(c.cout!==null&&c.cout!=="")||(c.temps!==null&&c.temps!==undefined&&c.temps!=="")).length;
+  document.getElementById("p-cas").textContent = S.cas.length;
+}
+function videEtape(msg){
+  return `<div class="vide"><p>${ech(msg)}</p>
+    <button class="btn" onclick="document.querySelector('[data-vue=import]').click()">Aller à l'import</button></div>`;
+}
+
+/* Le sélecteur de ligne : c'est lui qui remplace tout l'ancien référentiel.
+   Les lignes sont groupées par famille pour rester lisibles à plusieurs centaines. */
+function optionsLignes(selection){
+  let html = `<option value="">— choisir une ligne du bordereau —</option>`;
+  let groupe = null, ouvert = false;
+  for(const l of lignesPrix()){
+    if(l.regroupement && l.pu === null) continue;      // intitulé sans prix propre
+    const g = l.contexte || "Sans regroupement";
+    if(g !== groupe){
+      if(ouvert) html += `</optgroup>`;
+      html += `<optgroup label="${ech(g.length>80?g.slice(0,80)+"…":g)}">`;
+      groupe = g; ouvert = true;
+    }
+    const detail = [l.code, l.libelle, ...(l.precisions||[])].filter(Boolean).join(" · ");
+    const prix = l.pu===null ? "à chiffrer" : eur(l.pu);
+    html += `<option value="${ech(l.id)}"${l.id===selection?" selected":""}>${ech(detail.slice(0,110))} — ${prix}</option>`;
+  }
+  if(ouvert) html += `</optgroup>`;
+  return html;
+}
+
+/* ---------- 1. import ---------- */
+function vueImport(c){
+  let h = `<div class="depot" id="depot" tabindex="0" role="button">
+      <strong>Déposez un BPU ici</strong>
+      <span>Excel .xlsx, .xlsm ou .xls — ou cliquez pour choisir un fichier</span>
+      <input type="file" id="fichier" accept=".xlsx,.xlsm,.xls,.csv" hidden>
+    </div>`;
+
+  if(S.feuilles.length){
+    h += `<div class="bloc" style="margin-top:16px"><header><h3>Onglets de ${ech(S.fichier)}</h3>
+      <span class="n">${S.feuilles.length} onglet(s)</span></header>
+      <table><thead><tr><th>Onglet</th><th>En-tête</th><th>Colonnes reconnues</th>
+      <th class="n">Lignes</th><th>Prix renseignés</th><th></th></tr></thead><tbody>`;
+    S.feuilles.forEach((f,i)=>{
+      const prix = f.lignes.filter(l=>l.type==="prix");
+      const chiffres = prix.filter(l=>l.pu!==null).length;
+      const roles = Object.entries(f.roles||{}).map(([r,j])=>`${r}→${XLSX.utils.encode_col(j)}`).join(", ");
+      h += `<tr${i===S.feuilleActive?' style="background:var(--marine-pale)"':''}>
+        <td><b>${ech(f.nom)}</b></td>
+        <td>${f.entete?("ligne "+f.entete):'<span class="jeton j-non">non détecté</span>'}</td>
+        <td class="mono petit">${ech(roles)||"—"}</td>
+        <td class="n">${prix.length}</td>
+        <td>${chiffres ? `<span class="jeton j-main">${chiffres} / ${prix.length}</span>`
+                       : `<span class="jeton j-gris">à chiffrer</span>`}</td>
+        <td><button class="btn min ${i===S.feuilleActive?'':'sec'}" data-feuille="${i}">
+            ${i===S.feuilleActive?"Onglet actif":"Utiliser"}</button></td></tr>`;
+    });
+    h += `</tbody></table></div>`;
+    if(S.cas.length || S.couts.length)
+      h += `<div class="avis attention">Vos cas et vos coûts renvoient aux lignes de l'onglet sur lequel ils ont été créés.
+        Changer d'onglet ou charger un autre bordereau peut les laisser sans correspondance.</div>`;
+  } else {
+    h += `<div class="vide"><p>Rien n'est encore chargé. L'analyse se fait entièrement dans votre navigateur :
+      le fichier n'est envoyé nulle part.</p></div>`;
+  }
+  c.innerHTML = h;
+
+  const depot = document.getElementById("depot"), input = document.getElementById("fichier");
+  depot.onclick = ()=>input.click();
+  depot.onkeydown = e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); input.click(); } };
+  depot.ondragover = e=>{ e.preventDefault(); depot.classList.add("survol"); };
+  depot.ondragleave = ()=>depot.classList.remove("survol");
+  depot.ondrop = e=>{ e.preventDefault(); depot.classList.remove("survol");
+    if(e.dataTransfer.files[0]) charger(e.dataTransfer.files[0]); };
+  input.onchange = e=>{ if(e.target.files[0]) charger(e.target.files[0]); };
+  c.querySelectorAll("[data-feuille]").forEach(b=>b.onclick=()=>{
+    S.feuilleActive = +b.dataset.feuille; enregistrer(); dessiner(); });
+}
+
+function charger(file){
+  const fr = new FileReader();
+  fr.onload = e=>{
+    try{
+      const res = lireClasseur(new Uint8Array(e.target.result), file.name);
+      const utiles = res.feuilles.filter(f=>f.nbPrix > 0);
+      if(!utiles.length){
+        alert("Aucun tableau de prix reconnaissable dans ce fichier.\n\n"+
+              "Les pages de garde et les documents Word ou PDF ne sont pas lisibles automatiquement.");
+        return;
+      }
+      if(S.cas.length && !confirm("Charger ce bordereau remplace le précédent. Vos cas resteront mais pourront perdre leurs lignes. Continuer ?")) return;
+      S.fichier = file.name;
+      S.feuilles = res.feuilles;
+      S.feuilleActive = res.feuilles.indexOf(utiles.slice().sort((a,b)=>b.nbPrix-a.nbPrix)[0]);
+      enregistrer();
+      aller("synthese");
+    }catch(err){ alert("Lecture impossible : "+err.message); }
+  };
+  fr.readAsArrayBuffer(file);
+}
+
+/* ---------- 2. synthèse du bordereau ----------
+   Beaucoup de bordereaux portent les quantités estimatives du marché. Quand elles
+   sont là, le marché se chiffre sans qu'aucun cas n'ait été composé, et surtout on
+   voit sur quelles lignes il se joue réellement. */
+function syntheseBpu(){
+  const lp = lignesPrix().filter(l => !(l.regroupement && l.pu === null));
+  const chiffrees = lp.filter(l => l.pu !== null);
+  const prix = chiffrees.map(l=>l.pu).sort((a,b)=>a-b);
+  const mediane = prix.length ? (prix.length%2 ? prix[(prix.length-1)/2]
+                   : (prix[prix.length/2-1]+prix[prix.length/2])/2) : null;
+
+  const avecQte = chiffrees.filter(l => l.qteBpu !== null && l.qteBpu !== undefined && l.qteBpu > 0)
+    .map(l => ({l, montant: l.pu * l.qteBpu * S.coefficient}));
+  const total = avecQte.reduce((s,x)=>s+x.montant, 0);
+  avecQte.sort((a,b)=>b.montant-a.montant);
+
+  // concentration : combien de lignes font la moitié du marché
+  let cumul = 0, lignesMoitie = 0;
+  for(const x of avecQte){ cumul += x.montant; lignesMoitie++; if(cumul >= total/2) break; }
+
+  const familles = {};
+  for(const l of lp){
+    const f = (l.contexte || "").split(" › ")[0] || "Sans famille";
+    if(!familles[f]) familles[f] = {nom:f, lignes:0, chiffrees:0, montant:0, min:null, max:null};
+    const g = familles[f];
+    g.lignes++;
+    if(l.pu!==null){
+      g.chiffrees++;
+      g.min = g.min===null ? l.pu : Math.min(g.min, l.pu);
+      g.max = g.max===null ? l.pu : Math.max(g.max, l.pu);
+      if(l.qteBpu) g.montant += l.pu * l.qteBpu * S.coefficient;
+    }
+  }
+  const parFamille = Object.values(familles).sort((a,b)=> b.montant-a.montant || b.lignes-a.lignes);
+
+  // un autre onglet porte-t-il les quantités ? c'est souvent le DQE à côté du BPU
+  let ongletQte = null;
+  if(!avecQte.length){
+    S.feuilles.forEach((f,i)=>{
+      if(i===S.feuilleActive || ongletQte) return;
+      if(f.lignes.some(l=>l.type==="prix" && l.qteBpu>0)) ongletQte = {i, nom:f.nom};
+    });
+  }
+
+  return {lp, chiffrees, mediane, mini:prix[0]??null, maxi:prix[prix.length-1]??null,
+          avecQte, total, lignesMoitie, parFamille, ongletQte,
+          sansPrix: lp.filter(l=>l.pu===null).length,
+          aZero: chiffrees.filter(l=>l.pu===0).length};
+}
+
+function vueSynthese(c){
+  const f = feuille();
+  if(!f){ c.innerHTML = videEtape("Chargez d'abord un BPU à l'étape 1."); return; }
+  const y = syntheseBpu();
+  const coef = Math.round(S.coefficient*1000)/10;
+
+  let h = `<div class="bandeau">
+    <div class="chiffre"><span class="v">${y.lp.length}</span><span class="l">Lignes de prix</span></div>
+    <div class="chiffre"><span class="v">${y.chiffrees.length}</span><span class="l">Lignes chiffrées</span></div>
+    <div class="chiffre"><span class="v">${y.parFamille.length}</span><span class="l">Familles</span></div>
+    <div class="chiffre"><span class="v">${y.mediane===null?"—":eur(y.mediane)}</span><span class="l">Prix médian</span></div>
+    ${y.total>0?`<div class="chiffre"><span class="v">${eur(y.total)}</span><span class="l">Marché estimé au bordereau</span></div>`:""}
+  </div>`;
+
+  if(y.avecQte.length && y.total === 0){
+    h += `<div class="avis attention">Le bordereau porte bien ses quantités, mais les prix sont à zéro :
+      c'est un bordereau à remplir. Saisissez les prix à l'étape 3 et le montant du marché se calculera ici.</div>`;
+  } else if(y.total > 0){
+    h += `<div class="avis info">Le bordereau porte des quantités sur ${y.avecQte.length} ligne(s) :
+      le montant du marché est calculé sans qu'aucun cas n'ait été composé, au coefficient de ${coef} %.
+      <b>${y.lignesMoitie} ligne(s)</b> en représentent la moitié.</div>`;
+  } else if(y.ongletQte){
+    h += `<div class="avis attention">Cet onglet ne porte pas de quantités, mais l'onglet
+      « ${ech(y.ongletQte.nom)} » en contient.
+      <button class="btn min" id="versQte" style="margin-left:8px">Basculer sur cet onglet</button></div>`;
+  } else {
+    h += `<div class="avis attention">Aucune quantité dans ce bordereau : le montant du marché ne peut pas
+      être estimé. Composez des cas pratiques à l'étape 5 pour chiffrer des commandes types.</div>`;
+  }
+
+  if(y.total > 0){
+    const top = y.avecQte.slice(0, 12);
+    h += `<div class="bloc"><header><h3>Les lignes où se joue le marché</h3>
+      <span class="n">montants au coefficient appliqué</span></header>
+      <table><thead><tr><th style="width:80px">Code</th><th>Ligne</th>
+        <th class="n" style="width:82px">Qté</th><th class="n" style="width:92px">PU</th>
+        <th class="n" style="width:112px">Montant</th><th class="n" style="width:74px">Poids</th>
+        <th class="n" style="width:78px">Cumul</th></tr></thead><tbody>`;
+    let cum = 0;
+    top.forEach(x=>{
+      cum += x.montant;
+      h += `<tr><td class="mono petit">${ech(x.l.code)}</td>
+        <td>${ech(x.l.libelle)}
+          ${x.l.precisions&&x.l.precisions.length?` <span class="petit">${ech(x.l.precisions.join(" · "))}</span>`:""}
+          <div class="petit">${ech(x.l.contexte)}</div></td>
+        <td class="n">${x.l.qteBpu.toLocaleString("fr-FR")}</td>
+        <td class="n">${eur(x.l.pu*S.coefficient)}</td>
+        <td class="n"><b>${eur(x.montant)}</b></td>
+        <td class="n">${pct(x.montant/y.total)}</td>
+        <td class="n petit">${pct(cum/y.total)}</td></tr>`;
+    });
+    h += `</tbody></table>
+      <div class="dedans petit">Ce sont ces lignes qu'il faut chiffrer en premier :
+        une remise consentie ailleurs ne pèse presque rien sur le montant total.</div></div>`;
+  }
+
+  h += `<div class="bloc"><header><h3>Répartition par famille</h3>
+    <span class="n">${y.parFamille.length} famille(s)</span></header>
+    <table><thead><tr><th>Famille</th>
+      <th class="n" style="width:80px">Lignes</th><th class="n" style="width:92px">Prix mini</th>
+      <th class="n" style="width:92px">Prix maxi</th>
+      ${y.total>0?`<th class="n" style="width:112px">Montant</th><th class="n" style="width:74px">Poids</th>`:""}
+      </tr></thead><tbody>`;
+  y.parFamille.forEach(g=>{
+    h += `<tr><td>${ech(g.nom)}</td>
+      <td class="n">${g.lignes}${g.chiffrees<g.lignes?` <span class="petit">(${g.chiffrees} chiffrée${g.chiffrees>1?"s":""})</span>`:""}</td>
+      <td class="n">${g.min===null?"—":eur(g.min*S.coefficient)}</td>
+      <td class="n">${g.max===null?"—":eur(g.max*S.coefficient)}</td>
+      ${y.total>0?`<td class="n">${g.montant?eur(g.montant):"—"}</td>
+        <td class="n petit">${g.montant?pct(g.montant/y.total):"—"}</td>`:""}
+      </tr>`;
+  });
+  h += `</tbody></table></div>`;
+
+  if(y.sansPrix || y.aZero){
+    h += `<div class="bloc"><header><h3>Points à vérifier</h3></header><div class="dedans">`;
+    if(y.sansPrix) h += `<div>${y.sansPrix} ligne(s) sans prix : le bordereau est à chiffrer,
+      ou la colonne des prix n'a pas été lue entièrement. Elles sont saisissables à l'étape 3.</div>`;
+    if(y.aZero) h += `<div>${y.aZero} ligne(s) à 0 € : à confirmer avant de remettre l'offre.</div>`;
+    h += `</div></div>`;
+  }
+
+  if(S.cas.length){
+    const calculs = S.cas.map(cas=>({cas, r:calculerCas(cas)}));
+    h += `<div class="bloc"><header><h3>Cas pratiques composés</h3>
+      <span class="n">${S.cas.length} cas</span></header>
+      <table><thead><tr><th>Cas</th><th class="n" style="width:112px">Chiffre d'affaires</th>
+        <th class="n" style="width:104px">Net</th><th class="n" style="width:84px">Temps</th>
+        <th class="n" style="width:112px">Net par heure</th></tr></thead><tbody>`;
+    calculs.forEach(({cas,r})=>{
+      h += `<tr><td>${ech(cas.nom)}</td><td class="n">${eur(r.ca)}</td>
+        <td class="n">${eur(r.marge)}</td><td class="n petit">${r.heures?duree(r.heures):"—"}</td>
+        <td class="n">${r.margeHoraire===null?"—":eur(r.margeHoraire)+"/h"}</td></tr>`;
+    });
+    h += `</tbody></table></div>`;
+  }
+  c.innerHTML = h;
+
+  const b = document.getElementById("versQte");
+  if(b) b.onclick = ()=>{ S.feuilleActive = y.ongletQte.i; enregistrer(); dessiner(); };
+}
+
+/* ---------- 3. lignes ---------- */
+function vueLignes(c){
+  const f = feuille();
+  if(!f){ c.innerHTML = videEtape("Chargez d'abord un BPU à l'étape 1."); return; }
+  const lp = f.lignes.filter(l=>l.type==="prix");
+  const sans = lp.filter(l=>l.pu===null && !l.regroupement).length;
+
+  let h = `<div class="ligne-outils">
+    <label>Onglet <select id="selFeuille">${S.feuilles.map((x,i)=>
+      `<option value="${i}"${i===S.feuilleActive?" selected":""}>${ech(x.nom)} (${x.nbPrix||0})</option>`).join("")}</select></label>
+    <input type="search" id="rech" placeholder="Rechercher dans les libellés…" value="${ech(recherche)}" style="min-width:260px">
+    <span class="sep"></span>
+    <button class="btn sec min" id="btnResetPrix">Rétablir les prix du fichier</button>
+  </div>`;
+
+  if(sans) h += `<div class="avis attention">${sans} ligne(s) sans prix. Vous pouvez les saisir directement
+    dans la colonne PU : c'est ainsi qu'on chiffre un bordereau vierge avant de le remettre.</div>`;
+
+  h += `<div class="bloc"><header><h3>Lignes lues dans le bordereau</h3>
+    <span class="n">${lp.length} ligne(s)</span></header>
+    <table><thead><tr>
+      <th style="width:50px">Xl</th><th style="width:88px">Code</th><th>Libellé</th>
+      <th style="width:92px">Unité</th><th class="n" style="width:118px">PU HT</th>
+      <th class="n" style="width:78px">Qté BPU</th></tr></thead><tbody>`;
+
+  const q = norm(recherche);
+  f.lignes.forEach((l,idx)=>{
+    if(l.type === "section"){
+      if(q) return;
+      h += `<tr class="sect"><td></td><td colspan="5">${ech(l.texte)}</td></tr>`; return;
+    }
+    if(q && !norm(l.complet).includes(q)) return;
+    const modifie = l.pu !== l.puOrigine;
+    h += `<tr>
+      <td class="petit num">${l.ligneXl}</td>
+      <td class="mono petit">${ech(l.code)}</td>
+      <td>${ech(l.libelle)}
+        ${l.precisions&&l.precisions.length?`<div class="petit">${ech(l.precisions.join(" · "))}</div>`:""}
+        ${l.contexte?`<div class="petit">${ech(l.contexte)}</div>`:""}
+        ${l.regroupement&&l.pu===null?` <span class="jeton j-gris">intitulé</span>`:""}</td>
+      <td class="petit">${ech(l.unite)}</td>
+      <td class="n"><input type="number" step="0.01" data-pu="${idx}" value="${l.pu===null?"":l.pu}"
+          placeholder="${l.puTexte?ech(l.puTexte):"—"}" style="width:100px"${modifie?' title="Prix modifié"':''}>
+        ${modifie?`<div class="petit">fichier : ${l.puOrigine===null?"vide":eur(l.puOrigine)}</div>`:""}</td>
+      <td class="n petit">${l.qteBpu!==null&&l.qteBpu!==undefined?l.qteBpu:""}</td></tr>`;
+  });
+  h += `</tbody></table></div>`;
+  c.innerHTML = h;
+
+  document.getElementById("selFeuille").onchange = e=>{ S.feuilleActive=+e.target.value; enregistrer(); dessiner(); };
+  const r = document.getElementById("rech");
+  r.oninput = e=>{ recherche = e.target.value; };
+  r.onchange = ()=>dessiner();
+  r.onkeydown = e=>{ if(e.key==="Enter") dessiner(); };
+  c.querySelectorAll("[data-pu]").forEach(i=>i.onchange=()=>{
+    f.lignes[+i.dataset.pu].pu = i.value===""?null:+i.value; enregistrer(); dessiner(); });
+  document.getElementById("btnResetPrix").onclick = ()=>{
+    if(!confirm("Rétablir les prix tels qu'ils étaient dans le fichier ?")) return;
+    f.lignes.forEach(l=>{ if(l.type==="prix") l.pu = l.puOrigine; });
+    enregistrer(); dessiner();
+  };
+}
+
+/* ---------- 3. coûts ---------- */
+function vueCouts(c){
+  if(!feuille()){ c.innerHTML = videEtape("Chargez d'abord un BPU à l'étape 1."); return; }
+
+  let h = `<div class="avis info">Une ligne sans coût est considérée comme sans frais direct, une ligne sans temps
+    ne pèse pas dans le calcul horaire. Tout reste dans ce navigateur et dans le fichier JSON que vous exportez.</div>
+    <div class="bloc"><header><h3>Coût et temps par ligne</h3>
+      <span class="n">${S.couts.length} ligne(s) renseignée(s)</span></header>
+    <table><thead><tr><th>Ligne du bordereau</th>
+      <th class="n" style="width:96px">PU vente</th>
+      <th class="n" style="width:112px">Notre coût HT</th>
+      <th class="n" style="width:112px">Temps (h)</th>
+      <th class="n" style="width:98px">Net unitaire</th>
+      <th class="n" style="width:112px">Net par heure</th>
+      <th style="width:72px"></th></tr></thead><tbody>`;
+
+  if(!S.couts.length){
+    h += `<tr><td colspan="7" class="petit" style="padding:18px">Rien de renseigné pour l'instant.</td></tr>`;
+  }
+  S.couts.forEach(x=>{
+    const l = ligneParId(x.ligne);
+    const pu = l && l.pu!==null ? l.pu * S.coefficient : null;
+    const cu = (x.cout===null||x.cout===""||x.cout===undefined) ? null : +x.cout;
+    const tp = (x.temps===null||x.temps===""||x.temps===undefined) ? null : +x.temps;
+    const marge = (pu!==null) ? pu - (cu||0) : null;
+    const mh = (marge!==null && tp) ? marge/tp : null;
+    h += `<tr>
+      <td><select class="ligne" data-cout-ligne="${x.id}">${optionsLignes(x.ligne)}</select></td>
+      <td class="n">${pu===null?"—":eur(pu)}</td>
+      <td class="n"><input type="number" step="0.01" min="0" data-cout-val="${x.id}"
+          value="${cu===null?"":x.cout}" placeholder="—" style="width:98px"></td>
+      <td class="n"><input type="number" step="0.25" min="0" data-cout-temps="${x.id}"
+          value="${tp===null?"":x.temps}" placeholder="—" style="width:96px" title="En heures : 0,75 pour 45 minutes">
+          ${tp?`<div class="petit">${duree(tp)}</div>`:""}</td>
+      <td class="n"${marge!==null&&marge<0?' style="color:var(--brique)"':''}>${marge===null?"—":eur(marge)}</td>
+      <td class="n"${mh!==null&&mh<0?' style="color:var(--brique)"':''}>${mh===null?"—":eur(mh)+"/h"}</td>
+      <td><button class="btn sec min" data-cout-suppr="${x.id}">Retirer</button></td></tr>`;
+  });
+  h += `</tbody></table>
+    <div class="dedans"><button class="btn" id="btnAjoutCout">Ajouter une ligne</button></div></div>`;
+  c.innerHTML = h;
+
+  document.getElementById("btnAjoutCout").onclick = ()=>{
+    S.couts.push({id:"k"+Date.now(), ligne:"", cout:null, temps:null}); enregistrer(); dessiner(); };
+  c.querySelectorAll("[data-cout-temps]").forEach(i=>i.onchange=()=>{
+    S.couts.find(x=>x.id===i.dataset.coutTemps).temps = i.value===""?null:+i.value; enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-cout-ligne]").forEach(s=>s.onchange=()=>{
+    S.couts.find(x=>x.id===s.dataset.coutLigne).ligne = s.value; enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-cout-val]").forEach(i=>i.onchange=()=>{
+    S.couts.find(x=>x.id===i.dataset.coutVal).cout = i.value===""?null:+i.value; enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-cout-suppr]").forEach(b=>b.onclick=()=>{
+    S.couts = S.couts.filter(x=>x.id!==b.dataset.coutSuppr); enregistrer(); dessiner(); });
+}
+
+/* ---------- 4. cas pratiques ---------- */
+function vueCas(c){
+  if(!feuille()){ c.innerHTML = videEtape("Chargez d'abord un BPU à l'étape 1."); return; }
+
+  let h = `<div class="ligne-outils">
+    <button class="btn" id="btnAjoutCas">Ajouter un cas</button>
+    <span class="petit">Un cas est une commande type : les lignes que le client vous passerait, et leurs quantités.</span>
+  </div>`;
+
+  if(!S.cas.length){
+    h += `<div class="vide"><p>Aucun cas pour l'instant. Créez-en un, puis ajoutez-lui les lignes
+      du bordereau qui composent la commande.</p>
+      <button class="btn" id="btnPremier">Créer un premier cas</button></div>`;
+  }
+
+  S.cas.forEach(cas=>{
+    const r = calculerCas(cas);
+    h += `<div class="bloc"><header>
+      <h3><input data-cas-nom="${cas.id}" value="${ech(cas.nom)}" style="width:270px"></h3>
+      <label style="display:flex; gap:6px; align-items:center">Temps de l'intervention
+        <input type="number" min="0" step="0.25" data-cas-temps="${cas.id}"
+          value="${cas.temps===null||cas.temps===undefined?"":cas.temps}"
+          placeholder="${r.heuresLignes||"—"}" style="width:76px"
+          title="En heures : 1,5 pour une heure et demie. Laissez vide pour additionner le temps des lignes."> h</label>
+      <span class="n">${eur(r.ca)} · net ${eur(r.marge)}${r.heures>0?" · "+eur(r.margeHoraire)+"/h":""}
+        <button class="btn sec min" data-cas-suppr="${cas.id}" style="margin-left:10px">Supprimer</button></span></header>
+      <table><thead><tr><th>Ligne du bordereau</th>
+        <th class="n" style="width:82px">Quantité</th>
+        <th class="n" style="width:104px">PU</th>
+        <th class="n" style="width:104px">Montant</th>
+        <th style="width:76px"></th></tr></thead><tbody>`;
+    cas.postes.forEach((p,i)=>{
+      const l = ligneParId(p.ligne);
+      const pu = l && l.pu!==null ? l.pu*S.coefficient : null;
+      const mt = pu===null ? null : pu*(+p.qte||0);
+      h += `<tr>
+        <td><select class="ligne" data-poste-ligne="${cas.id}|${i}">${optionsLignes(p.ligne)}</select></td>
+        <td class="n"><input type="number" min="0" step="1" data-poste-qte="${cas.id}|${i}" value="${p.qte}" style="width:70px"></td>
+        <td class="n">${pu===null?'<span class="petit">à chiffrer</span>':eur(pu)}</td>
+        <td class="n">${mt===null?"—":eur(mt)}</td>
+        <td><button class="btn sec min" data-poste-suppr="${cas.id}|${i}">Retirer</button></td></tr>`;
+    });
+    if(!cas.postes.length)
+      h += `<tr><td colspan="5" class="petit" style="padding:14px">Aucune ligne dans ce cas.</td></tr>`;
+    h += `</tbody></table>
+      <div class="dedans"><button class="btn sec min" data-poste-ajout="${cas.id}">Ajouter une ligne</button>
+      <button class="btn sec min" data-cas-dup="${cas.id}">Dupliquer le cas</button></div></div>`;
+  });
+  c.innerHTML = h;
+
+  const trouve = id => S.cas.find(x=>x.id===id);
+  const nouveau = ()=>{ S.cas.push({id:"c"+Date.now(), nom:"Nouveau cas", postes:[{ligne:"",qte:1}]});
+                        enregistrer(); dessiner(); };
+  document.getElementById("btnAjoutCas").onclick = nouveau;
+  const bp = document.getElementById("btnPremier"); if(bp) bp.onclick = nouveau;
+  c.querySelectorAll("[data-cas-nom]").forEach(i=>i.onchange=()=>{ trouve(i.dataset.casNom).nom=i.value; enregistrer(); });
+  c.querySelectorAll("[data-cas-temps]").forEach(i=>i.onchange=()=>{
+    trouve(i.dataset.casTemps).temps = i.value===""?null:+i.value; enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-cas-suppr]").forEach(b=>b.onclick=()=>{
+    if(!confirm("Supprimer ce cas ?")) return;
+    S.cas = S.cas.filter(x=>x.id!==b.dataset.casSuppr); enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-cas-dup]").forEach(b=>b.onclick=()=>{
+    const o = trouve(b.dataset.casDup);
+    S.cas.push({id:"c"+Date.now(), nom:o.nom+" (copie)", temps:o.temps??null,
+                postes:JSON.parse(JSON.stringify(o.postes))});
+    enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-poste-ligne]").forEach(s=>s.onchange=()=>{
+    const [id,i]=s.dataset.posteLigne.split("|"); trouve(id).postes[+i].ligne=s.value; enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-poste-qte]").forEach(i=>i.onchange=()=>{
+    const [id,k]=i.dataset.posteQte.split("|"); trouve(id).postes[+k].qte=+i.value||0; enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-poste-suppr]").forEach(b=>b.onclick=()=>{
+    const [id,i]=b.dataset.posteSuppr.split("|"); trouve(id).postes.splice(+i,1); enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-poste-ajout]").forEach(b=>b.onclick=()=>{
+    trouve(b.dataset.posteAjout).postes.push({ligne:"",qte:1}); enregistrer(); dessiner(); });
+}
+
+/* ---------- 5. résultats ---------- */
+function vueResultats(c){
+  if(!feuille()){ c.innerHTML = videEtape("Chargez d'abord un BPU à l'étape 1."); return; }
+  if(!S.cas.length){
+    c.innerHTML = `<div class="vide"><p>Aucun cas à chiffrer. Composez-en un à l'étape 4.</p>
+      <button class="btn" onclick="document.querySelector('[data-vue=cas]').click()">Aller aux cas pratiques</button></div>`;
+    return;
+  }
+
+  const calculs = S.cas.map(cas=>({cas, r:calculerCas(cas)}));
+  const ca = calculs.reduce((s,x)=>s+x.r.ca,0);
+  const cout = calculs.reduce((s,x)=>s+x.r.cout,0);
+  const heures = calculs.reduce((s,x)=>s+x.r.heures,0);
+  const coef = Math.round(S.coefficient*1000)/10;
+
+  let h = `<div class="bloc"><header><h3>Coefficient appliqué au bordereau</h3>
+      <span class="n">rabais ou surenchère sur tous les prix unitaires</span></header>
+    <div class="dedans" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap">
+      <input type="range" id="coef" min="60" max="140" step="1" value="${Math.round(coef)}" style="flex:1; min-width:240px">
+      <input type="number" id="coefNum" min="10" max="300" step="0.5" value="${coef}" style="width:88px"> %
+      <button class="btn sec min" id="coefReset">Remettre à 100 %</button>
+    </div></div>`;
+
+  h += `<div class="bandeau">
+    <div class="chiffre"><span class="v">${eur(ca)}</span><span class="l">Chiffre d'affaires cumulé</span></div>
+    <div class="chiffre"><span class="v">${eur(cout)}</span><span class="l">Coûts directs saisis</span></div>
+    <div class="chiffre"><span class="v">${eur(ca-cout)}</span><span class="l">Net après coûts directs</span></div>
+    <div class="chiffre"><span class="v">${duree(heures)}</span><span class="l">Temps d'intervention</span></div>
+    <div class="chiffre"><span class="v">${heures>0?eur((ca-cout)/heures):"—"}</span><span class="l">Net par heure de technicien</span></div>
+  </div>
+  <div class="ligne-outils"><button class="btn" id="btnXlsx">Télécharger les résultats en Excel</button>
+    <span class="petit">Classeur à trois onglets, avec des formules vivantes : modifiez un prix ou le coefficient et tout se recalcule.</span></div>`;
+
+  calculs.forEach(({cas,r})=>{
+    h += `<div class="bloc"><header><h3>${ech(cas.nom)}</h3>
+      <span class="n">net ${eur(r.marge)}${r.heures>0?" · "+duree(r.heures)
+        +(r.tempsSaisi!==null?" (temps du cas)":"")+" · "+eur(r.margeHoraire)+"/h":""}</span></header>
+      <table><thead><tr><th>Ligne</th>
+        <th class="n" style="width:56px">Qté</th><th class="n" style="width:92px">PU</th>
+        <th class="n" style="width:98px">Montant</th><th class="n" style="width:88px">Coût unit.</th>
+        <th class="n" style="width:94px">Coût total</th><th class="n" style="width:86px">Temps</th>
+        <th class="n" style="width:94px">Net</th></tr></thead><tbody>`;
+    r.postes.forEach(p=>{
+      if(!p.ligne){
+        h += `<tr><td colspan="8"><span class="jeton j-non">ligne introuvable</span>
+          <span class="petit"> ${ech(p.motif)}</span></td></tr>`; return;
+      }
+      const marge = (p.montant!==null) ? p.montant - (p.coutTotal||0) : null;
+      h += `<tr>
+        <td><span class="mono petit">${ech(p.ligne.code)}</span> ${ech(p.ligne.libelle)}
+          ${p.ligne.precisions&&p.ligne.precisions.length?` <span class="petit">${ech(p.ligne.precisions.join(" · "))}</span>`:""}
+          <div class="petit">ligne Excel ${p.ligne.ligneXl}${p.ligne.contexte?" · "+ech(p.ligne.contexte):""}</div></td>
+        <td class="n">${p.qte}</td>
+        <td class="n">${p.pu===null?'<span class="petit">à chiffrer</span>':eur(p.pu)}</td>
+        <td class="n">${p.montant===null?"—":eur(p.montant)}</td>
+        <td class="n">${p.coutUnitaire===null?'<span class="petit">—</span>':eur(p.coutUnitaire)}</td>
+        <td class="n">${p.coutTotal===null?"—":eur(p.coutTotal)}</td>
+        <td class="n petit">${p.tempsTotal===null?"—":duree(p.tempsTotal)}</td>
+        <td class="n"${marge!==null&&marge<0?' style="color:var(--brique)"':''}>${marge===null?"—":eur(marge)}</td></tr>`;
+    });
+    h += `</tbody><tfoot><tr><td colspan="3">Total du cas</td>
+      <td class="n">${eur(r.ca)}</td><td></td><td class="n">${eur(r.cout)}</td>
+      <td class="n">${r.heures?duree(r.heures):"—"}</td>
+      <td class="n"${r.marge<0?' style="color:var(--brique)"':''}>${eur(r.marge)}</td></tr></tfoot></table>`;
+    if(r.tempsSaisi!==null && r.heuresLignes && r.heuresLignes!==r.tempsSaisi)
+      h += `<div class="dedans petit">Temps retenu : ${duree(r.tempsSaisi)} saisi sur le cas,
+        au lieu de ${duree(r.heuresLignes)} en additionnant les lignes.</div>`;
+    if(r.incomplets) h += `<div class="dedans petit">${r.incomplets} ligne(s) sans prix : le total est partiel.</div>`;
+    h += `</div>`;
+  });
+  c.innerHTML = h;
+
+  const maj = v=>{ S.coefficient = Math.max(0.1, v/100); enregistrer(); dessiner(); };
+  document.getElementById("coef").oninput = e=>{ document.getElementById("coefNum").value = e.target.value; };
+  document.getElementById("coef").onchange = e=>maj(+e.target.value);
+  document.getElementById("coefNum").onchange = e=>maj(+e.target.value);
+  document.getElementById("coefReset").onclick = ()=>maj(100);
+  document.getElementById("btnXlsx").onclick = async (e)=>{
+    const b = e.currentTarget;
+    b.disabled = true; const avant = b.textContent; b.textContent = "Préparation du classeur…";
+    try{ await exporterExcel(calculs); }
+    catch(err){ alert("Export impossible : "+err.message); }
+    finally{ b.disabled = false; b.textContent = avant; }
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EXPORT EXCEL
+   Les trois onglets sont reliés par de vraies formules : le détail pointe vers
+   les prix de l'onglet BPU et vers la cellule de coefficient, la synthèse somme
+   le détail. Modifier un prix dans le classeur recalcule tout, sans l'application.
+   Chaque formule porte aussi sa valeur calculée, pour rester lisible avant recalcul.
+   ═══════════════════════════════════════════════════════════ */
+const EUR = '#,##0.00\\ "€"';
+const BANDE = "FFEAF1F7";          // fond d'un cas sur deux dans le détail
+const ENTETE = "FF123A5B";
+
+async function exporterExcel(calculs){
+  if(typeof ExcelJS === "undefined"){
+    alert("La bibliothèque d'export n'a pas pu être chargée.\n\n"+
+          "Elle vient d'un CDN : vérifiez votre connexion, puis réessayez.");
+    return;
+  }
+  const wb = new ExcelJS.Workbook();
+  wb.calcProperties.fullCalcOnLoad = true;   // sans quoi Excel afficherait les valeurs figées
+
+  const titrer = (ws, nb) => {
+    const r = ws.getRow(1);
+    r.font = {bold:true, color:{argb:"FFFFFFFF"}};
+    r.fill = {type:"pattern", pattern:"solid", fgColor:{argb:ENTETE}};
+    r.alignment = {vertical:"middle", wrapText:true};
+    r.height = 28;
+    ws.views = [{state:"frozen", ySplit:1}];
+  };
+  const formule = (cell, f, v, fmt) => {
+    cell.value = {formula:f, result:(v===null||v===undefined||!isFinite(v))?0:v};
+    if(fmt) cell.numFmt = fmt;
+  };
+
+  /* ---- Synthese : le coefficient y pilote tout le classeur ---- */
+  const syn = wb.addWorksheet("Synthese");
+  syn.columns = [{width:34},{width:18},{width:16},{width:16},{width:11},
+                 {width:14},{width:16},{width:18},{width:22}];
+  syn.getCell("A1").value = "Coefficient appliqué";
+  syn.getCell("A1").font = {bold:true};
+  syn.getCell("B1").value = S.coefficient;
+  syn.getCell("B1").numFmt = "0.0%";
+  syn.getCell("B1").font = {bold:true};
+  syn.getCell("B1").fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FFFDF3E0"}};
+  syn.getCell("B1").border = {top:{style:"thin"},left:{style:"thin"},bottom:{style:"thin"},right:{style:"thin"}};
+  syn.getCell("A2").value = "Bordereau";       syn.getCell("B2").value = S.fichier || "";
+  syn.getCell("A3").value = "Édité le";        syn.getCell("B3").value = new Date().toLocaleString("fr-FR");
+
+  const entSyn = ["Cas","Chiffre d'affaires","Coûts directs","Net après coûts","Temps (h)",
+                  "CA par heure","Net par heure","Temps du cas (h)","Somme des lignes (h)"];
+  const rEnt = syn.getRow(5);
+  entSyn.forEach((t,i)=>{ rEnt.getCell(i+1).value = t; });
+  rEnt.font = {bold:true, color:{argb:"FFFFFFFF"}};
+  rEnt.fill = {type:"pattern", pattern:"solid", fgColor:{argb:ENTETE}};
+  rEnt.alignment = {vertical:"middle", wrapText:true};
+  rEnt.height = 28;
+  syn.views = [{state:"frozen", ySplit:5}];
+
+  const prem = 6, dern = 5 + calculs.length;
+  calculs.forEach(({cas,r},ic)=>{
+    const x = prem + ic, row = syn.getRow(x);
+    row.getCell(1).value = (ic+1)+". "+cas.nom;
+    formule(row.getCell(2), `SUMIF(Detail!$A:$A,$A${x},Detail!$G:$G)`, r.ca, EUR);
+    formule(row.getCell(3), `SUMIF(Detail!$A:$A,$A${x},Detail!$I:$I)`, r.cout, EUR);
+    formule(row.getCell(4), `B${x}-C${x}`, r.marge, EUR);
+    formule(row.getCell(5), `IF($H${x}="",$I${x},$H${x})`, r.heures, "0.00");
+    formule(row.getCell(6), `IF(E${x}=0,"",B${x}/E${x})`, r.caHoraire||0, EUR);
+    formule(row.getCell(7), `IF(E${x}=0,"",D${x}/E${x})`, r.margeHoraire||0, EUR);
+    if(r.tempsSaisi!==null){ row.getCell(8).value = r.tempsSaisi; row.getCell(8).numFmt = "0.00"; }
+    formule(row.getCell(9), `SUMIF(Detail!$A:$A,$A${x},Detail!$K:$K)`, r.heuresLignes, "0.00");
+    // même alternance que le détail, pour retrouver un cas d'un onglet à l'autre
+    if(ic % 2 === 1) row.eachCell({includeEmpty:true}, c=>{
+      c.fill = {type:"pattern", pattern:"solid", fgColor:{argb:BANDE}}; });
+  });
+
+  const t = dern + 1, tot = syn.getRow(t);
+  const sca = calculs.reduce((a,x)=>a+x.r.ca,0), sco = calculs.reduce((a,x)=>a+x.r.cout,0),
+        sh  = calculs.reduce((a,x)=>a+x.r.heures,0);
+  tot.getCell(1).value = "Total";
+  formule(tot.getCell(2), `SUM(B${prem}:B${dern})`, sca, EUR);
+  formule(tot.getCell(3), `SUM(C${prem}:C${dern})`, sco, EUR);
+  formule(tot.getCell(4), `B${t}-C${t}`, sca-sco, EUR);
+  formule(tot.getCell(5), `SUM(E${prem}:E${dern})`, sh, "0.00");
+  formule(tot.getCell(6), `IF(E${t}=0,"",B${t}/E${t})`, sh>0?sca/sh:0, EUR);
+  formule(tot.getCell(7), `IF(E${t}=0,"",D${t}/E${t})`, sh>0?(sca-sco)/sh:0, EUR);
+  tot.font = {bold:true};
+  tot.eachCell({includeEmpty:true}, c=>{ c.border = {top:{style:"medium", color:{argb:"FFC3CCD6"}}}; });
+
+  /* ---- Detail : créé maintenant pour l'ordre des onglets, rempli après BPU ---- */
+  const det = wb.addWorksheet("Detail");
+
+  /* ---- BPU : la seule source des prix ---- */
+  const lignes = lignesPrix();
+  const rangBpu = {};
+  const bpu = wb.addWorksheet("BPU");
+  bpu.columns = [{width:11},{width:12},{width:52},{width:24},{width:34},
+                 {width:12},{width:13},{width:14},{width:12}];
+  bpu.addRow(["Ligne Excel","Code","Libellé","Précision","Famille","Unité",
+              "PU HT","Notre coût HT","Temps (h)"]);
+  titrer(bpu);
+  lignes.forEach((l,i)=>{
+    rangBpu[l.id] = i + 2;
+    const cu = coutDeLigne(l.id), tp = tempsDeLigne(l.id);
+    const row = bpu.addRow([l.ligneXl, l.code, l.libelle, (l.precisions||[]).join(" · "),
+                            l.contexte, l.unite, l.pu, cu, tp]);
+    if(l.pu!==null) row.getCell(7).numFmt = EUR;
+    if(cu!==null) row.getCell(8).numFmt = EUR;
+    if(tp!==null) row.getCell(9).numFmt = "0.00";
+    row.alignment = {vertical:"top"};
+  });
+
+  /* ---- Detail : un poste par ligne, un fond sur deux cas ---- */
+  det.columns = [{width:30},{width:12},{width:58},{width:12},{width:10},{width:14},
+                 {width:14},{width:14},{width:14},{width:18},{width:18},{width:14},{width:20}];
+  det.addRow(["Cas","Code","Libellé","Unité","Quantité","PU appliqué","Montant HT",
+              "Coût unitaire","Coût total","Temps unitaire (h)","Temps total (h)","Net",
+              "Total net du cas"]);
+  titrer(det);
+
+  let x = 2;
+  calculs.forEach(({cas,r},ic)=>{
+    const nomCas = (ic+1) + ". " + cas.nom;
+    const bande = ic % 2 === 1;
+    const premiere = x;
+    r.postes.forEach(p=>{
+      if(!p.ligne){
+        det.addRow([nomCas,"","ligne introuvable","",0,0,0,0,0,0,0,0]);
+        x++; return;
+      }
+      // hors contexte, « Du studio au T3 » ne dit pas de quel diagnostic il s'agit
+      const intitule = [p.ligne.contexte, p.ligne.libelle, ...(p.ligne.precisions||[])]
+        .filter(Boolean).join(" › ");
+      const n = rangBpu[p.ligne.id];
+      const row = det.addRow([nomCas, p.ligne.code, intitule, p.ligne.unite, p.qte]);
+      formule(row.getCell(6),  `BPU!G${n}*Synthese!$B$1`, p.pu, EUR);
+      formule(row.getCell(7),  `E${x}*F${x}`, p.montant, EUR);
+      formule(row.getCell(8),  `IF(BPU!H${n}="",0,BPU!H${n})`, p.coutUnitaire, EUR);
+      formule(row.getCell(9),  `E${x}*H${x}`, p.coutTotal, EUR);
+      formule(row.getCell(10), `IF(BPU!I${n}="",0,BPU!I${n})`, p.tempsUnitaire, "0.00");
+      formule(row.getCell(11), `E${x}*J${x}`, p.tempsTotal, "0.00");
+      formule(row.getCell(12), `G${x}-I${x}`, (p.montant||0)-(p.coutTotal||0), EUR);
+      row.alignment = {vertical:"top"};
+      x++;
+    });
+    const derniere = x - 1;
+    if(derniere >= premiere){
+      // Une seule case par cas : ce qui reste une fois les coûts internes déduits.
+      const total = det.getRow(premiere).getCell(13);
+      formule(total, `SUM(L${premiere}:L${derniere})`, r.marge, EUR);
+      total.font = {bold:true};
+      total.alignment = {vertical:"top", horizontal:"right"};
+      // la bande et le filet sont posés après coup, pour couvrir aussi la colonne du total
+      for(let y=premiere; y<=derniere; y++){
+        const row = det.getRow(y);
+        for(let col=1; col<=13; col++){
+          const c = row.getCell(col);
+          if(bande) c.fill = {type:"pattern", pattern:"solid", fgColor:{argb:BANDE}};
+          if(y === premiere) c.border = {top:{style:"medium", color:{argb:"FF9FB6C9"}}};
+        }
+      }
+    }
+  });
+  // le filtre s'arrête avant la colonne du total : filtrer des lignes fausserait sa lecture
+  det.autoFilter = {from:{row:1, column:1}, to:{row:Math.max(1,x-1), column:12}};
+
+  /* ---- téléchargement ---- */
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const nom = "resultats-bpu-" + (S.fichier||"bpu").replace(/\.[^.]+$/,"")
+                .replace(/[^\w\-]+/g,"-").slice(0,40) + ".xlsx";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = nom; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+}
+
+/* ---------- 6. sauvegarde ---------- */
+function vueSauvegarde(c){
+  c.innerHTML = `
+  <div class="avis info">Le navigateur retient votre travail automatiquement, mais ce stockage est lié à cette machine
+    et il est souvent vidé ou cloisonné quand la page tourne dans un cadre intégré. Le fichier JSON est la vraie sauvegarde.</div>
+
+  <div class="bloc"><header><h3>Dossier complet</h3>
+    <span class="n">le bordereau, vos coûts et vos cas</span></header>
+    <div class="dedans">
+      <p style="margin:0 0 12px; color:var(--encre-2)">Un fichier par consultation, à archiver avec le dossier.
+        Il contient les prix du bordereau et vos coûts : ne le publiez pas.</p>
+      <button class="btn" id="exp">Exporter le dossier</button>
+      <button class="btn sec" id="cop">Copier dans le presse-papier</button>
+      <button class="btn sec" id="imp">Importer un dossier</button>
+    </div></div>
+
+  <div class="bloc"><header><h3>Repartir de zéro</h3></header>
+    <div class="dedans"><button class="btn sec" id="raz">Effacer le contenu de cette session</button></div></div>
+  <input type="file" id="fichierJson" accept=".json" hidden>
+  <textarea id="tampon" style="position:fixed;left:-9999px;top:0" aria-hidden="true"></textarea>`;
+
+  const nomNet = ()=> (S.fichier||"bpu").replace(/\.[^.]+$/,"").replace(/[^\w\-]+/g,"-").slice(0,40);
+  document.getElementById("exp").onclick = ()=>{
+    const b = new Blob([JSON.stringify(S,null,2)], {type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b); a.download = "bpu-dossier-"+nomNet()+".json"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+  };
+  document.getElementById("cop").onclick = async ()=>{
+    const t = JSON.stringify(S,null,2);
+    try{ await navigator.clipboard.writeText(t); }
+    catch(e){ const z=document.getElementById("tampon"); z.value=t; z.select(); document.execCommand("copy"); }
+    alert("Dossier copié. Collez-le dans un bloc code de votre page Notion.");
+  };
+  const input = document.getElementById("fichierJson");
+  document.getElementById("imp").onclick = ()=>input.click();
+  input.onchange = e=>{
+    const fl = e.target.files[0]; if(!fl) return;
+    const fr = new FileReader();
+    fr.onload = ev=>{
+      try{
+        const o = migrer(JSON.parse(ev.target.result));
+        if(!o || o.version !== VERSION) throw new Error("fichier d'une autre version de l'application");
+        S = Object.assign(etatNeuf(), o);
+        enregistrer(); alert("Dossier importé."); aller("synthese");
+      }catch(err){ alert("Fichier illisible : "+err.message); }
+    };
+    fr.readAsText(fl); input.value = "";
+  };
+  document.getElementById("raz").onclick = ()=>{
+    if(!confirm("Effacer le bordereau chargé, les coûts et les cas ?")) return;
+    localStorage.removeItem(CLE); S = etatNeuf(); aller("import");
+  };
+}
+
+/* ---------- démarrage ---------- */
+/* Intégrée dans une page (Notion, un intranet), la page tourne en contexte tiers :
+   le navigateur y cloisonne le stockage et bloque souvent les téléchargements.
+   Mieux vaut le dire que laisser un export échouer sans explication. */
+if(window.self !== window.top){
+  const c = document.getElementById("cadre");
+  c.style.display = "flex";
+  document.getElementById("plein").href = location.href;
+}
+document.querySelectorAll(".etape").forEach(b=>b.onclick=()=>aller(b.dataset.vue));
+const repris = recharger();
+aller(repris && S.feuilles.length ? "synthese" : "import");
+</script>
+</body>
+</html>
