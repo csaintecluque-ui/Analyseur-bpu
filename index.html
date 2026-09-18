@@ -466,10 +466,19 @@ function calculerCas(cas){
   const heuresLignes = heuresPostes;
   const saisi = (cas.temps===null || cas.temps==="" || cas.temps===undefined) ? null : +cas.temps;
   const heures = saisi!==null ? saisi : heuresLignes;
+  // Un cas décrit une intervention ; la cadence et la durée en font une campagne.
+  const parJour = Math.max(0, +cas.parJour || 1);
+  const jours = Math.max(0, +cas.jours || 1);
+  const occurrences = parJour * jours;
+  const heuresParJour = heures * parJour;
   // Pas de taux de marge : sans le coût du technicien, un pourcentage donnerait
   // 100 % dès qu'une ligne n'a pas de frais direct. Le net par heure, lui, se compare
   // au coût horaire chargé que vous connaissez par ailleurs.
-  return {postes, ca, cout, marge: ca - cout, heures, heuresLignes, tempsSaisi:saisi,
+  return {postes, heuresLignes, tempsSaisi:saisi,
+          ca, cout, marge: ca - cout, heures,                       // par intervention
+          parJour, jours, occurrences, heuresParJour,               // cadence
+          caTotal: ca * occurrences, coutCampagne: cout * occurrences,
+          margeTotal: (ca - cout) * occurrences, heuresTotal: heures * occurrences,
           margeHoraire: heures>0 ? (ca-cout)/heures : null,
           caHoraire: heures>0 ? ca/heures : null,
           incomplets};
@@ -903,7 +912,13 @@ function vueCas(c){
           value="${cas.temps===null||cas.temps===undefined?"":cas.temps}"
           placeholder="${r.heuresLignes||"—"}" style="width:76px"
           title="En heures : 1,5 pour une heure et demie. Laissez vide pour additionner le temps des lignes."> h</label>
-      <span class="n">${eur(r.ca)} · net ${eur(r.marge)}${r.heures>0?" · "+eur(r.margeHoraire)+"/h":""}
+      <label style="display:flex; gap:6px; align-items:center">×
+        <input type="number" min="0" step="1" data-cas-parjour="${cas.id}" value="${cas.parJour??1}"
+          style="width:54px" title="Interventions de ce type réalisées par jour"> par jour</label>
+      <label style="display:flex; gap:6px; align-items:center">sur
+        <input type="number" min="0" step="1" data-cas-jours="${cas.id}" value="${cas.jours??1}"
+          style="width:58px" title="Nombre de jours de la campagne"> jours</label>
+      <span class="n">${r.occurrences!==1?`<b>${eur(r.caTotal)}</b> sur ${r.occurrences} intervention(s) · `:""}${eur(r.ca)} l'unité · net ${eur(r.marge)}${r.heures>0?" · "+eur(r.margeHoraire)+"/h":""}
         <button class="btn sec min" data-cas-suppr="${cas.id}" style="margin-left:10px">Supprimer</button></span></header>
       <table><thead><tr><th>Ligne du bordereau</th>
         <th class="n" style="width:82px">Quantité</th>
@@ -937,12 +952,17 @@ function vueCas(c){
   c.querySelectorAll("[data-cas-nom]").forEach(i=>i.onchange=()=>{ trouve(i.dataset.casNom).nom=i.value; enregistrer(); });
   c.querySelectorAll("[data-cas-temps]").forEach(i=>i.onchange=()=>{
     trouve(i.dataset.casTemps).temps = i.value===""?null:+i.value; enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-cas-parjour]").forEach(i=>i.onchange=()=>{
+    trouve(i.dataset.casParjour).parJour = Math.max(1,+i.value||1); enregistrer(); dessiner(); });
+  c.querySelectorAll("[data-cas-jours]").forEach(i=>i.onchange=()=>{
+    trouve(i.dataset.casJours).jours = Math.max(1,+i.value||1); enregistrer(); dessiner(); });
   c.querySelectorAll("[data-cas-suppr]").forEach(b=>b.onclick=()=>{
     if(!confirm("Supprimer ce cas ?")) return;
     S.cas = S.cas.filter(x=>x.id!==b.dataset.casSuppr); enregistrer(); dessiner(); });
   c.querySelectorAll("[data-cas-dup]").forEach(b=>b.onclick=()=>{
     const o = trouve(b.dataset.casDup);
     S.cas.push({id:"c"+Date.now(), nom:o.nom+" (copie)", temps:o.temps??null,
+                parJour:o.parJour??1, jours:o.jours??1,
                 postes:JSON.parse(JSON.stringify(o.postes))});
     enregistrer(); dessiner(); });
   c.querySelectorAll("[data-poste-ligne]").forEach(s=>s.onchange=()=>{
@@ -965,9 +985,10 @@ function vueResultats(c){
   }
 
   const calculs = S.cas.map(cas=>({cas, r:calculerCas(cas)}));
-  const ca = calculs.reduce((s,x)=>s+x.r.ca,0);
-  const cout = calculs.reduce((s,x)=>s+x.r.cout,0);
-  const heures = calculs.reduce((s,x)=>s+x.r.heures,0);
+  const ca = calculs.reduce((s,x)=>s+x.r.caTotal,0);
+  const cout = calculs.reduce((s,x)=>s+x.r.coutCampagne,0);
+  const heures = calculs.reduce((s,x)=>s+x.r.heuresTotal,0);
+  const interventions = calculs.reduce((s,x)=>s+x.r.occurrences,0);
   const coef = Math.round(S.coefficient*1000)/10;
 
   let h = `<div class="bloc"><header><h3>Coefficient appliqué au bordereau</h3>
@@ -979,6 +1000,7 @@ function vueResultats(c){
     </div></div>`;
 
   h += `<div class="bandeau">
+    <div class="chiffre"><span class="v">${interventions}</span><span class="l">Interventions chiffrées</span></div>
     <div class="chiffre"><span class="v">${eur(ca)}</span><span class="l">Chiffre d'affaires cumulé</span></div>
     <div class="chiffre"><span class="v">${eur(cout)}</span><span class="l">Coûts directs saisis</span></div>
     <div class="chiffre"><span class="v">${eur(ca-cout)}</span><span class="l">Net après coûts directs</span></div>
@@ -990,8 +1012,8 @@ function vueResultats(c){
 
   calculs.forEach(({cas,r})=>{
     h += `<div class="bloc"><header><h3>${ech(cas.nom)}</h3>
-      <span class="n">net ${eur(r.marge)}${r.heures>0?" · "+duree(r.heures)
-        +(r.tempsSaisi!==null?" (temps du cas)":"")+" · "+eur(r.margeHoraire)+"/h":""}</span></header>
+      <span class="n">${r.occurrences!==1?r.occurrences+" interventions · ":""}net ${eur(r.margeTotal)}${r.heures>0?" · "+duree(r.heuresTotal)
+        +" · "+eur(r.margeHoraire)+"/h":""}</span></header>
       <table><thead><tr><th>Ligne</th>
         <th class="n" style="width:56px">Qté</th><th class="n" style="width:92px">PU</th>
         <th class="n" style="width:98px">Montant</th><th class="n" style="width:88px">Coût unit.</th>
@@ -1015,10 +1037,27 @@ function vueResultats(c){
         <td class="n petit">${p.tempsTotal===null?"—":duree(p.tempsTotal)}</td>
         <td class="n"${marge!==null&&marge<0?' style="color:var(--brique)"':''}>${marge===null?"—":eur(marge)}</td></tr>`;
     });
-    h += `</tbody><tfoot><tr><td colspan="3">Total du cas</td>
+    h += `</tbody><tfoot><tr><td colspan="3">Total pour une intervention</td>
       <td class="n">${eur(r.ca)}</td><td></td><td class="n">${eur(r.cout)}</td>
       <td class="n">${r.heures?duree(r.heures):"—"}</td>
       <td class="n"${r.marge<0?' style="color:var(--brique)"':''}>${eur(r.marge)}</td></tr></tfoot></table>`;
+    if(r.occurrences !== 1){
+      // Une cadence ne vaut que si elle tient dans une journée de technicien.
+      const charge = r.heuresParJour;
+      const tenable = charge === 0 || charge <= 7.5;
+      h += `<div class="dedans" style="border-top:1px solid var(--trait); display:flex; flex-wrap:wrap; gap:0">
+        <div class="chiffre"><span class="v">${r.parJour} / jour</span><span class="l">Cadence annoncée</span></div>
+        <div class="chiffre"><span class="v">${r.jours} jours</span><span class="l">Durée de la campagne</span></div>
+        <div class="chiffre"><span class="v">${r.occurrences}</span><span class="l">Interventions</span></div>
+        <div class="chiffre"><span class="v">${eur(r.caTotal)}</span><span class="l">Chiffre d'affaires total</span></div>
+        <div class="chiffre"><span class="v">${eur(r.margeTotal)}</span><span class="l">Net total</span></div>
+        ${charge?`<div class="chiffre"><span class="v" style="color:${tenable?"var(--vert)":"var(--brique)"}">${duree(charge)}</span>
+          <span class="l">Charge par jour${tenable?"":" — au-delà d'une journée"}</span></div>`:""}
+      </div>`;
+      if(charge && !tenable)
+        h += `<div class="dedans petit" style="padding-top:0">${r.parJour} × ${duree(r.heures)} font ${duree(charge)} par jour :
+          la cadence ne tient pas dans une journée. Revoyez le rythme, le temps de l'intervention, ou prévoyez plusieurs techniciens.</div>`;
+    }
     if(r.tempsSaisi!==null && r.heuresLignes && r.heuresLignes!==r.tempsSaisi)
       h += `<div class="dedans petit">Temps retenu : ${duree(r.tempsSaisi)} saisi sur le cas,
         au lieu de ${duree(r.heuresLignes)} en additionnant les lignes.</div>`;
@@ -1076,8 +1115,9 @@ async function exporterExcel(calculs){
 
   /* ---- Synthese : le coefficient y pilote tout le classeur ---- */
   const syn = wb.addWorksheet("Synthese");
-  syn.columns = [{width:34},{width:18},{width:16},{width:16},{width:11},
-                 {width:14},{width:16},{width:18},{width:22}];
+  syn.columns = [{width:32},{width:10},{width:9},{width:13},{width:15},{width:14},{width:13},
+                 {width:17},{width:15},{width:15},{width:15},{width:14},{width:15},
+                 {width:17},{width:20}];
   syn.getCell("A1").value = "Coefficient appliqué";
   syn.getCell("A1").font = {bold:true};
   syn.getCell("B1").value = S.coefficient;
@@ -1088,8 +1128,11 @@ async function exporterExcel(calculs){
   syn.getCell("A2").value = "Bordereau";       syn.getCell("B2").value = S.fichier || "";
   syn.getCell("A3").value = "Édité le";        syn.getCell("B3").value = new Date().toLocaleString("fr-FR");
 
-  const entSyn = ["Cas","Chiffre d'affaires","Coûts directs","Net après coûts","Temps (h)",
-                  "CA par heure","Net par heure","Temps du cas (h)","Somme des lignes (h)"];
+  const entSyn = ["Cas","Par jour","Jours","Interventions",
+                  "CA unitaire","Coûts unitaires","Net unitaire",
+                  "CA total","Coûts totaux","Net total",
+                  "Temps unitaire (h)","Temps total (h)","Net par heure",
+                  "Temps du cas (h)","Somme des lignes (h)"];
   const rEnt = syn.getRow(5);
   entSyn.forEach((t,i)=>{ rEnt.getCell(i+1).value = t; });
   rEnt.font = {bold:true, color:{argb:"FFFFFFFF"}};
@@ -1102,29 +1145,38 @@ async function exporterExcel(calculs){
   calculs.forEach(({cas,r},ic)=>{
     const x = prem + ic, row = syn.getRow(x);
     row.getCell(1).value = (ic+1)+". "+cas.nom;
-    formule(row.getCell(2), `SUMIF(Detail!$A:$A,$A${x},Detail!$G:$G)`, r.ca, EUR);
-    formule(row.getCell(3), `SUMIF(Detail!$A:$A,$A${x},Detail!$I:$I)`, r.cout, EUR);
-    formule(row.getCell(4), `B${x}-C${x}`, r.marge, EUR);
-    formule(row.getCell(5), `IF($H${x}="",$I${x},$H${x})`, r.heures, "0.00");
-    formule(row.getCell(6), `IF(E${x}=0,"",B${x}/E${x})`, r.caHoraire||0, EUR);
-    formule(row.getCell(7), `IF(E${x}=0,"",D${x}/E${x})`, r.margeHoraire||0, EUR);
-    if(r.tempsSaisi!==null){ row.getCell(8).value = r.tempsSaisi; row.getCell(8).numFmt = "0.00"; }
-    formule(row.getCell(9), `SUMIF(Detail!$A:$A,$A${x},Detail!$K:$K)`, r.heuresLignes, "0.00");
+    row.getCell(2).value = r.parJour;
+    row.getCell(3).value = r.jours;
+    formule(row.getCell(4),  `B${x}*C${x}`, r.occurrences);
+    formule(row.getCell(5),  `SUMIF(Detail!$A:$A,$A${x},Detail!$G:$G)`, r.ca, EUR);
+    formule(row.getCell(6),  `SUMIF(Detail!$A:$A,$A${x},Detail!$I:$I)`, r.cout, EUR);
+    formule(row.getCell(7),  `E${x}-F${x}`, r.marge, EUR);
+    formule(row.getCell(8),  `E${x}*D${x}`, r.caTotal, EUR);
+    formule(row.getCell(9),  `F${x}*D${x}`, r.coutCampagne, EUR);
+    formule(row.getCell(10), `H${x}-I${x}`, r.margeTotal, EUR);
+    formule(row.getCell(11), `IF($N${x}="",$O${x},$N${x})`, r.heures, "0.00");
+    formule(row.getCell(12), `K${x}*D${x}`, r.heuresTotal, "0.00");
+    formule(row.getCell(13), `IF(K${x}=0,"",G${x}/K${x})`, r.margeHoraire||0, EUR);
+    if(r.tempsSaisi!==null){ row.getCell(14).value = r.tempsSaisi; row.getCell(14).numFmt = "0.00"; }
+    formule(row.getCell(15), `SUMIF(Detail!$A:$A,$A${x},Detail!$K:$K)`, r.heuresLignes, "0.00");
     // même alternance que le détail, pour retrouver un cas d'un onglet à l'autre
+    for(let col=1; col<=15; col++) row.getCell(col);
     if(ic % 2 === 1) row.eachCell({includeEmpty:true}, c=>{
       c.fill = {type:"pattern", pattern:"solid", fgColor:{argb:BANDE}}; });
   });
 
   const t = dern + 1, tot = syn.getRow(t);
-  const sca = calculs.reduce((a,x)=>a+x.r.ca,0), sco = calculs.reduce((a,x)=>a+x.r.cout,0),
-        sh  = calculs.reduce((a,x)=>a+x.r.heures,0);
+  const sca = calculs.reduce((a,x)=>a+x.r.caTotal,0),
+        sco = calculs.reduce((a,x)=>a+x.r.coutCampagne,0),
+        sh  = calculs.reduce((a,x)=>a+x.r.heuresTotal,0),
+        sn  = calculs.reduce((a,x)=>a+x.r.occurrences,0);
   tot.getCell(1).value = "Total";
-  formule(tot.getCell(2), `SUM(B${prem}:B${dern})`, sca, EUR);
-  formule(tot.getCell(3), `SUM(C${prem}:C${dern})`, sco, EUR);
-  formule(tot.getCell(4), `B${t}-C${t}`, sca-sco, EUR);
-  formule(tot.getCell(5), `SUM(E${prem}:E${dern})`, sh, "0.00");
-  formule(tot.getCell(6), `IF(E${t}=0,"",B${t}/E${t})`, sh>0?sca/sh:0, EUR);
-  formule(tot.getCell(7), `IF(E${t}=0,"",D${t}/E${t})`, sh>0?(sca-sco)/sh:0, EUR);
+  formule(tot.getCell(4),  `SUM(D${prem}:D${dern})`, sn);
+  formule(tot.getCell(8),  `SUM(H${prem}:H${dern})`, sca, EUR);
+  formule(tot.getCell(9),  `SUM(I${prem}:I${dern})`, sco, EUR);
+  formule(tot.getCell(10), `H${t}-I${t}`, sca-sco, EUR);
+  formule(tot.getCell(12), `SUM(L${prem}:L${dern})`, sh, "0.00");
+  formule(tot.getCell(13), `IF(L${t}=0,"",J${t}/L${t})`, sh>0?(sca-sco)/sh:0, EUR);
   tot.font = {bold:true};
   tot.eachCell({includeEmpty:true}, c=>{ c.border = {top:{style:"medium", color:{argb:"FFC3CCD6"}}}; });
 
